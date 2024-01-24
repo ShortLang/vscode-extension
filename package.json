@@ -1,38 +1,41 @@
 {
-  "name": "nrs-language-server",
-  "description": "nano rust language server",
-  "license": "MIT",
-  "version": "1.5.0",
+  "name": "sl-language-server",
+  "description": "ShortLang language server",
+  "license": "GPL-3.0-only",
+  "version": "0.1.0",
   "categories": [],
   "keywords": [
     "language-server",
     "tower-lsp"
   ],
   "repository": {
-    "url": "https://github.com/IWANABETHATGUY/tower-lsp-boilerplate"
+    "url": "https://github.com/ShortLang/vscode-extension"
   },
   "engines": {
     "vscode": "^1.66.0"
   },
   "enabledApiProposals": [],
   "activationEvents": [
-    "onLanguage:nrs"
+    "onLanguage:sl"
   ],
   "main": "./dist/extension.js",
   "contributes": {
     "languages": [
       {
-        "id": "nrs",
+        "id": "sl",
+        "aliases": [
+          "ShortLang"
+        ],
         "extensions": [
-          ".nrs"
+          ".sl"
         ]
       }
     ],
     "configuration": {
       "type": "object",
-      "title": "nrs-language-server",
+      "title": "sl-language-server",
       "properties": {
-        "nrs-language-server.trace.server": {
+        "sl-language-server.trace.server": {
           "type": "string",
           "scope": "window",
           "enum": [

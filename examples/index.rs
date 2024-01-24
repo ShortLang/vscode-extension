@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use nrs_language_server::chumsky::{parse, type_inference, ParserResult};
+use sl_language_server::chumsky::{parse, type_inference, ParserResult};
 
 fn main() {
-    let source = include_str!("./test.nrs");
+    let source = include_str!("./test.sl");
     // let source = r#"
     // test
     // println!("{:?}", &source[10..11]);

@@ -370,22 +370,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nrs-language-server"
-version = "0.1.0"
-dependencies = [
- "chumsky",
- "dashmap",
- "env_logger",
- "im-rc",
- "log",
- "ropey",
- "serde",
- "serde_json",
- "tokio",
- "tower-lsp",
-]
-
-[[package]]
 name = "num_cpus"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -632,6 +616,22 @@ checksum = "16d69225bde7a69b235da73377861095455d298f2b970996eec25ddbb42b3d1e"
 dependencies = [
  "bitmaps",
  "typenum",
+]
+
+[[package]]
+name = "sl-language-server"
+version = "0.1.0"
+dependencies = [
+ "chumsky",
+ "dashmap",
+ "env_logger",
+ "im-rc",
+ "log",
+ "ropey",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower-lsp",
 ]
 
 [[package]]
