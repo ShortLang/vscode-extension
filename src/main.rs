@@ -1,20 +1,19 @@
-use std::collections::HashMap;
-
 use chumsky::error::Simple;
 use dashmap::DashMap;
 use logos::Logos;
-use sl_language_server::chumsky::{Expr, ImCompleteSemanticToken, LogosToken, PParser};
+use sl_language_server::parser::{Expr, ImCompleteSemanticToken, LogosToken, PParser};
 // use sl_language_server::completion::completion;
 // use sl_language_server::jump_definition::get_definition;
 // use sl_language_server::reference::get_reference;
 use ropey::Rope;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sl_language_server::semantic_token::{self, semantic_token_from_ast, LEGEND_TYPE};
+use sl_language_server::semantic_token::{self, semantic_token_from_ast};
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::notification::Notification;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
+
 #[derive(Debug)]
 struct Backend {
     client: Client,
@@ -68,7 +67,16 @@ impl LanguageServer for Backend {
                             semantic_tokens_options: SemanticTokensOptions {
                                 work_done_progress_options: WorkDoneProgressOptions::default(),
                                 legend: SemanticTokensLegend {
-                                    token_types: LEGEND_TYPE.into(),
+                                    token_types: vec![
+                                        SemanticTokenType::FUNCTION,
+                                        SemanticTokenType::VARIABLE,
+                                        SemanticTokenType::STRING,
+                                        SemanticTokenType::COMMENT,
+                                        SemanticTokenType::NUMBER,
+                                        SemanticTokenType::KEYWORD,
+                                        SemanticTokenType::OPERATOR,
+                                        SemanticTokenType::PARAMETER,
+                                    ],
                                     token_modifiers: vec![],
                                 },
                                 range: Some(true),
@@ -194,9 +202,6 @@ impl LanguageServer for Backend {
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
         let uri = params.text_document.uri.to_string();
-        // self.client
-        //     .log_message(MessageType::LOG, "semantic_token_full")
-        //     .await;
         let semantic_tokens = || -> Option<Vec<SemanticToken>> {
             let mut im_complete_tokens = self.semantic_token_map.get_mut(&uri)?;
             let rope = self.document_map.get(&uri)?;

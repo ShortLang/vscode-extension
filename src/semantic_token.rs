@@ -1,17 +1,15 @@
-use crate::chumsky::{Expr, ExprKind, ImCompleteSemanticToken};
-use std::collections::HashMap;
-use tower_lsp::lsp_types::SemanticTokenType;
+use crate::parser::{Expr, ExprKind, ImCompleteSemanticToken};
 
-pub const LEGEND_TYPE: &[SemanticTokenType] = &[
-    SemanticTokenType::FUNCTION,
-    SemanticTokenType::VARIABLE,
-    SemanticTokenType::STRING,
-    SemanticTokenType::COMMENT,
-    SemanticTokenType::NUMBER,
-    SemanticTokenType::KEYWORD,
-    SemanticTokenType::OPERATOR,
-    SemanticTokenType::PARAMETER,
-];
+pub enum LegendType {
+    Function,
+    Variable,
+    String,
+    Comment,
+    Number,
+    Keyword,
+    Operator,
+    Parameter,
+}
 
 pub fn semantic_token_from_ast(ast: &Vec<Expr>) -> Vec<ImCompleteSemanticToken> {
     let mut semantic_tokens = vec![];
@@ -26,55 +24,29 @@ pub fn semantic_token_from_ast(ast: &Vec<Expr>) -> Vec<ImCompleteSemanticToken> 
 pub fn semantic_token_from_expr(expr: &Expr, semantic_tokens: &mut Vec<ImCompleteSemanticToken>) {
     match &expr.inner {
         ExprKind::Call(string, params) => {
-            semantic_tokens.push(ImCompleteSemanticToken {
-                start: expr.span.start,
-                length: expr.span.len(),
-                token_type: LEGEND_TYPE
-                    .iter()
-                    .position(|item| item == &SemanticTokenType::FUNCTION)
-                    .unwrap(),
-            });
-            semantic_tokens.push(ImCompleteSemanticToken {
-                start: 0,
-                length: string.len(),
-                token_type: LEGEND_TYPE
-                    .iter()
-                    .position(|item| item == &SemanticTokenType::FUNCTION)
-                    .unwrap(),
-            });
             if let Some(params) = params {
                 params.iter().for_each(|param| {
                     semantic_token_from_expr(param, semantic_tokens);
                 });
-                params.iter().for_each(|exprs| {});
             }
+            semantic_tokens.push(ImCompleteSemanticToken {
+                start: expr.span.start,
+                length: string.len(),
+                token_type: LegendType::Function as usize,
+            });
         }
         ExprKind::Ident(string) => {
             semantic_tokens.push(ImCompleteSemanticToken {
                 start: expr.span.start,
-                length: expr.span.len(),
-                token_type: LEGEND_TYPE
-                    .iter()
-                    .position(|item| item == &SemanticTokenType::VARIABLE)
-                    .unwrap(),
-            });
-            semantic_tokens.push(ImCompleteSemanticToken {
-                start: 0,
                 length: string.len(),
-                token_type: LEGEND_TYPE
-                    .iter()
-                    .position(|item| item == &SemanticTokenType::VARIABLE)
-                    .unwrap(),
+                token_type: LegendType::Variable as usize,
             });
         }
         ExprKind::Bool(_) | ExprKind::Nil | ExprKind::Continue | ExprKind::Break => {
             semantic_tokens.push(ImCompleteSemanticToken {
                 start: expr.span.start,
                 length: expr.span.len(),
-                token_type: LEGEND_TYPE
-                    .iter()
-                    .position(|item| item == &SemanticTokenType::KEYWORD)
-                    .unwrap(),
+                token_type: LegendType::Keyword as usize,
             });
         }
         ExprKind::Binary(lhs, _, rhs)
@@ -97,20 +69,14 @@ pub fn semantic_token_from_expr(expr: &Expr, semantic_tokens: &mut Vec<ImComplet
             semantic_tokens.push(ImCompleteSemanticToken {
                 start: expr.span.start,
                 length: expr.span.len(),
-                token_type: LEGEND_TYPE
-                    .iter()
-                    .position(|item| item == &SemanticTokenType::NUMBER)
-                    .unwrap(),
+                token_type: LegendType::Number as usize,
             });
         }
         ExprKind::String(_) | ExprKind::FString(_) => {
             semantic_tokens.push(ImCompleteSemanticToken {
                 start: expr.span.start,
                 length: expr.span.len(),
-                token_type: LEGEND_TYPE
-                    .iter()
-                    .position(|item| item == &SemanticTokenType::STRING)
-                    .unwrap(),
+                token_type: LegendType::String as usize,
             });
         }
         ExprKind::Array(exprs) => {
@@ -130,50 +96,49 @@ pub fn semantic_token_from_expr(expr: &Expr, semantic_tokens: &mut Vec<ImComplet
             }
         }
         ExprKind::InlineFunction(name, params, body) => {
+            semantic_token_from_expr(body, semantic_tokens);
             semantic_tokens.push(ImCompleteSemanticToken {
                 start: expr.span.start,
                 length: name.len(),
-                token_type: LEGEND_TYPE
-                    .iter()
-                    .position(|item| item == &SemanticTokenType::FUNCTION)
-                    .unwrap(),
+                token_type: LegendType::Function as usize,
             });
+            let params = params
+                .iter()
+                .map(|param| param.len() + 1)
+                .fold(0, |acc, len| acc + len);
             semantic_tokens.push(ImCompleteSemanticToken {
                 start: expr.span.start + name.len(),
-                length: expr.span.end,
-                token_type: LEGEND_TYPE
-                    .iter()
-                    .position(|item| item == &SemanticTokenType::PARAMETER)
-                    .unwrap(),
+                length: params,
+                token_type: LegendType::Parameter as usize,
             });
-            semantic_token_from_expr(body, semantic_tokens);
         }
         ExprKind::MultilineFunction(name, params, body) => {
-            semantic_tokens.push(ImCompleteSemanticToken {
-                start: 0,
-                length: name.len(),
-                token_type: LEGEND_TYPE
-                    .iter()
-                    .position(|item| item == &SemanticTokenType::FUNCTION)
-                    .unwrap(),
+            body.iter().for_each(|expr| {
+                semantic_token_from_expr(expr, semantic_tokens);
             });
             semantic_tokens.push(ImCompleteSemanticToken {
                 start: expr.span.start,
-                length: expr.span.len(),
-                token_type: LEGEND_TYPE
-                    .iter()
-                    .position(|item| item == &SemanticTokenType::PARAMETER)
-                    .unwrap(),
+                length: name.len(),
+                token_type: LegendType::Function as usize,
             });
+            let params = params
+                .iter()
+                .map(|param| param.len() + 1)
+                .fold(0, |acc, len| acc + len);
+            semantic_tokens.push(ImCompleteSemanticToken {
+                start: expr.span.start + name.len(),
+                length: params,
+                token_type: LegendType::Parameter as usize,
+            });
+        }
+        ExprKind::Postfix(lhs, _) => {
+            semantic_token_from_expr(lhs, semantic_tokens);
         }
         _ => {
             semantic_tokens.push(ImCompleteSemanticToken {
                 start: expr.span.start,
                 length: expr.span.len(),
-                token_type: LEGEND_TYPE
-                    .iter()
-                    .position(|item| item == &SemanticTokenType::VARIABLE)
-                    .unwrap(),
+                token_type: LegendType::Variable as usize,
             });
         }
     }

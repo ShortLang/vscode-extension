@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use sl_language_server::chumsky::{parse, type_inference, ParserResult};
+use sl_language_server::parser::{parse, type_inference, ParserResult};
 
 fn main() {
     let source = include_str!("./test.sl");
