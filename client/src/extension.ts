@@ -35,23 +35,37 @@ let client: LanguageClient;
 // type a = Parameters<>;
 
 export async function activate(context: ExtensionContext) {
-  let disposable = commands.registerCommand("helloworld.helloWorld", async uri => {
-    // The code you place here will be executed every time your command is executed
-    // Display a message box to the user
-    const url = Uri.parse('/home/victor/Documents/test-dir/sl/another.sl')
-    let document = await workspace.openTextDocument(uri);
-    await window.showTextDocument(document);
-    
-    // console.log(uri)
-    window.activeTextEditor.document
-    let editor = window.activeTextEditor;
-    let range = new Range(1, 1, 1, 1)
-    editor.selection = new Selection(range.start, range.end);
+  let disposable = commands.registerCommand('extension.runScript', function () {
+    const editor = window.activeTextEditor;
+    if (!editor) {
+        return; // No open text editor
+    }
+
+    const document = editor.document;
+    const fileName = document.fileName;
+
+    // Retrieve the setting
+    let shortlangPath = workspace.getConfiguration('shortlang').get('executablePath');
+
+    // If shortlangPath is an empty string, set it to the default value
+    if (shortlangPath === "") {
+        shortlangPath = process.platform === "win32" ? "shortlang.exe" : "shortlang";
+    }
+
+    // Find the terminal named "ShortLang" or create a new one
+    let terminal = window.terminals.find(t => t.name === "ShortLang");
+    if (!terminal) {
+        terminal = window.createTerminal("ShortLang");
+    }
+
+    // Run the command
+    terminal.sendText(`${shortlangPath} ${fileName}`);
+    terminal.show();
   });
 
   context.subscriptions.push(disposable);
 
-  const traceOutputChannel = window.createOutputChannel("sl Language Server trace");
+  const traceOutputChannel = window.createOutputChannel("ShortLang Language Server Trace");
   const command = process.env.SERVER_PATH || "sl-language-server";
   const run: Executable = {
     command,
@@ -81,7 +95,7 @@ export async function activate(context: ExtensionContext) {
   };
 
   // Create the language client and start the client.
-  client = new LanguageClient("sl-language-server", "sl language server", serverOptions, clientOptions);
+  client = new LanguageClient("sl-language-server", "ShortLang Language Server", serverOptions, clientOptions);
   // activateInlayHints(context);
   client.start();
 }

@@ -1,6 +1,6 @@
 {
   "name": "sl-language-server",
-  "description": "ShortLang language server",
+  "description": "ShortLang Language Server",
   "license": "GPL-3.0-only",
   "version": "0.1.0",
   "categories": [],
@@ -20,6 +20,22 @@
   ],
   "main": "./dist/extension.js",
   "contributes": {
+    "menus": {
+      "editor/title": [
+        {
+          "command": "extension.runScript",
+          "group": "navigation",
+          "when": "resourceLangId == sl"
+        }
+      ]
+    },
+    "commands": [
+      {
+          "command": "extension.runScript",
+          "title": "Run Script",
+          "icon": "$(run)"
+      }
+    ],
     "languages": [
       {
         "id": "sl",
@@ -33,9 +49,13 @@
     ],
     "configuration": {
       "type": "object",
-      "title": "sl-language-server",
+      "title": "ShortLang",
       "properties": {
-        "sl-language-server.trace.server": {
+        "shortlang.executablePath": {
+          "type": "string",
+          "description": "Path to the ShortLang executable"
+        },
+        "shortlang.trace.server": {
           "type": "string",
           "scope": "window",
           "enum": [
