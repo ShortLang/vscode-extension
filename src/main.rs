@@ -1,16 +1,16 @@
 use std::collections::HashMap;
 
+use chumsky::error::Simple;
 use dashmap::DashMap;
-use sl_language_server::chumsky::{
-    parse, type_inference, Func, ImCompleteSemanticToken, ParserResult,
-};
-use sl_language_server::completion::completion;
-use sl_language_server::jump_definition::get_definition;
-use sl_language_server::reference::get_reference;
-use sl_language_server::semantic_token::{semantic_token_from_ast, LEGEND_TYPE};
+use logos::Logos;
+use sl_language_server::chumsky::{Expr, ImCompleteSemanticToken, LogosToken, PParser};
+// use sl_language_server::completion::completion;
+// use sl_language_server::jump_definition::get_definition;
+// use sl_language_server::reference::get_reference;
 use ropey::Rope;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sl_language_server::semantic_token::{self, semantic_token_from_ast, LEGEND_TYPE};
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::notification::Notification;
 use tower_lsp::lsp_types::*;
@@ -18,7 +18,7 @@ use tower_lsp::{Client, LanguageServer, LspService, Server};
 #[derive(Debug)]
 struct Backend {
     client: Client,
-    ast_map: DashMap<String, HashMap<String, Func>>,
+    ast_map: DashMap<String, Vec<Expr>>,
     document_map: DashMap<String, Rope>,
     semantic_token_map: DashMap<String, Vec<ImCompleteSemanticToken>>,
 }
@@ -132,55 +132,61 @@ impl LanguageServer for Backend {
         &self,
         params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
-        let definition = async {
-            let uri = params.text_document_position_params.text_document.uri;
-            let ast = self.ast_map.get(uri.as_str())?;
-            let rope = self.document_map.get(uri.as_str())?;
+        // let definition = async {
+        //     let uri = params.text_document_position_params.text_document.uri;
+        //     let ast = self.ast_map.get(uri.as_str())?;
+        //     let rope = self.document_map.get(uri.as_str())?;
 
-            let position = params.text_document_position_params.position;
-            let char = rope.try_line_to_char(position.line as usize).ok()?;
-            let offset = char + position.character as usize;
-            // self.client.log_message(MessageType::INFO, &format!("{:#?}, {}", ast.value(), offset)).await;
-            let span = get_definition(&ast, offset);
-            self.client
-                .log_message(MessageType::INFO, &format!("{:?}, ", span))
-                .await;
-            span.and_then(|(_, range)| {
-                let start_position = offset_to_position(range.start, &rope)?;
-                let end_position = offset_to_position(range.end, &rope)?;
+        //     let position = params.text_document_position_params.position;
+        //     let char = rope.try_line_to_char(position.line as usize).ok()?;
+        //     let offset = char + position.character as usize;
+        //     // // self.client.log_message(MessageType::INFO, &format!("{:#?}, {}", ast.value(), offset)).await;
+        //     // // let span = get_definition(&ast, offset);
+        //     // // self.client
+        //     // //     .log_message(MessageType::INFO, &format!("{:?}, ", span))
+        //     // //     .await;
+        //     span.and_then(|(_, range)| {
+        //         let start_position = offset_to_position(range.start, &rope)?;
+        //         let end_position = offset_to_position(range.end, &rope)?;
 
-                let range = Range::new(start_position, end_position);
+        //         let range = Range::new(start_position, end_position);
 
-                Some(GotoDefinitionResponse::Scalar(Location::new(uri, range)))
-            })
-        }
-        .await;
-        Ok(definition)
+        //         Some(GotoDefinitionResponse::Scalar(Location::new(uri, range)))
+        //     })
+        // }
+        // .await;
+        // Ok(definition)
+        Ok(Some(GotoDefinitionResponse::Scalar(Location::new(
+            Url::parse("https://github.com/ShortLang/ShortLang").unwrap(),
+            Range::new(Position::new(0, 0), Position::new(0, 0)),
+        ))))
     }
+
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
-        let reference_list = || -> Option<Vec<Location>> {
-            let uri = params.text_document_position.text_document.uri;
-            let ast = self.ast_map.get(&uri.to_string())?;
-            let rope = self.document_map.get(&uri.to_string())?;
+        // let reference_list = || -> Option<Vec<Location>> {
+        //     let uri = params.text_document_position.text_document.uri;
+        //     let ast = self.ast_map.get(&uri.to_string())?;
+        //     let rope = self.document_map.get(&uri.to_string())?;
 
-            let position = params.text_document_position.position;
-            let char = rope.try_line_to_char(position.line as usize).ok()?;
-            let offset = char + position.character as usize;
-            let reference_list = get_reference(&ast, offset, false);
-            let ret = reference_list
-                .into_iter()
-                .filter_map(|(_, range)| {
-                    let start_position = offset_to_position(range.start, &rope)?;
-                    let end_position = offset_to_position(range.end, &rope)?;
+        //     let position = params.text_document_position.position;
+        //     let char = rope.try_line_to_char(position.line as usize).ok()?;
+        //     let offset = char + position.character as usize;
+        //     let reference_list = get_reference(&ast, offset, false);
+        //     let ret = reference_list
+        //         .into_iter()
+        //         .filter_map(|(_, range)| {
+        //             let start_position = offset_to_position(range.start, &rope)?;
+        //             let end_position = offset_to_position(range.end, &rope)?;
 
-                    let range = Range::new(start_position, end_position);
+        //             let range = Range::new(start_position, end_position);
 
-                    Some(Location::new(uri.clone(), range))
-                })
-                .collect::<Vec<_>>();
-            Some(ret)
-        }();
-        Ok(reference_list)
+        //             Some(Location::new(uri.clone(), range))
+        //         })
+        //         .collect::<Vec<_>>();
+        //     Some(ret)
+        // }();
+        // Ok(reference_list)
+        Ok(Some(vec![]))
     }
 
     async fn semantic_tokens_full(
@@ -188,9 +194,9 @@ impl LanguageServer for Backend {
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
         let uri = params.text_document.uri.to_string();
-        self.client
-            .log_message(MessageType::LOG, "semantic_token_full")
-            .await;
+        // self.client
+        //     .log_message(MessageType::LOG, "semantic_token_full")
+        //     .await;
         let semantic_tokens = || -> Option<Vec<SemanticToken>> {
             let mut im_complete_tokens = self.semantic_token_map.get_mut(&uri)?;
             let rope = self.document_map.get(&uri)?;
@@ -282,149 +288,152 @@ impl LanguageServer for Backend {
         &self,
         params: tower_lsp::lsp_types::InlayHintParams,
     ) -> Result<Option<Vec<InlayHint>>> {
-        self.client
-            .log_message(MessageType::INFO, "inlay hint")
-            .await;
-        let uri = &params.text_document.uri;
-        let mut hashmap = HashMap::new();
-        if let Some(ast) = self.ast_map.get(uri.as_str()) {
-            ast.iter().for_each(|(_, v)| {
-                type_inference(&v.body, &mut hashmap);
-            });
-        }
+        // self.client
+        //     .log_message(MessageType::INFO, "inlay hint")
+        //     .await;
+        // let uri = &params.text_document.uri;
+        // let mut hashmap = HashMap::new();
+        // if let Some(ast) = self.ast_map.get(uri.as_str()) {
+        //     ast.iter().for_each(|(_, v)| {
+        //         type_inference(&v.body, &mut hashmap);
+        //     });
+        // }
 
-        let document = match self.document_map.get(uri.as_str()) {
-            Some(rope) => rope,
-            None => return Ok(None),
-        };
-        let inlay_hint_list = hashmap
-            .into_iter()
-            .map(|(k, v)| {
-                (
-                    k.start,
-                    k.end,
-                    match v {
-                        sl_language_server::chumsky::Value::Null => "null".to_string(),
-                        sl_language_server::chumsky::Value::Bool(_) => "bool".to_string(),
-                        sl_language_server::chumsky::Value::Num(_) => "number".to_string(),
-                        sl_language_server::chumsky::Value::Str(_) => "string".to_string(),
-                        sl_language_server::chumsky::Value::List(_) => "[]".to_string(),
-                        sl_language_server::chumsky::Value::Func(_) => v.to_string(),
-                    },
-                )
-            })
-            .filter_map(|item| {
-                // let start_position = offset_to_position(item.0, document)?;
-                let end_position = offset_to_position(item.1, &document)?;
-                let inlay_hint = InlayHint {
-                    text_edits: None,
-                    tooltip: None,
-                    kind: Some(InlayHintKind::TYPE),
-                    padding_left: None,
-                    padding_right: None,
-                    data: None,
-                    position: end_position,
-                    label: InlayHintLabel::LabelParts(vec![InlayHintLabelPart {
-                        value: item.2,
-                        tooltip: None,
-                        location: Some(Location {
-                            uri: params.text_document.uri.clone(),
-                            range: Range {
-                                start: Position::new(0, 4),
-                                end: Position::new(0, 5),
-                            },
-                        }),
-                        command: None,
-                    }]),
-                };
-                Some(inlay_hint)
-            })
-            .collect::<Vec<_>>();
+        // let document = match self.document_map.get(uri.as_str()) {
+        //     Some(rope) => rope,
+        //     None => return Ok(None),
+        // };
+        // let inlay_hint_list = hashmap
+        //     .into_iter()
+        //     .map(|(k, v)| {
+        //         (
+        //             k.start,
+        //             k.end,
+        //             match v {
+        //                 // sl_language_server::chumsky::Value::Null => "null".to_string(),
+        //                 // sl_language_server::chumsky::Value::Bool(_) => "bool".to_string(),
+        //                 // sl_language_server::chumsky::Value::Num(_) => "number".to_string(),
+        //                 // sl_language_server::chumsky::Value::Str(_) => "string".to_string(),
+        //                 // sl_language_server::chumsky::Value::List(_) => "[]".to_string(),
+        //                 // sl_language_server::chumsky::Value::Func(_) => v.to_string(),
+        //             },
+        //         )
+        //     })
+        //     .filter_map(|item| {
+        //         // let start_position = offset_to_position(item.0, document)?;
+        //         let end_position = offset_to_position(item.1, &document)?;
+        //         let inlay_hint = InlayHint {
+        //             text_edits: None,
+        //             tooltip: None,
+        //             kind: Some(InlayHintKind::TYPE),
+        //             padding_left: None,
+        //             padding_right: None,
+        //             data: None,
+        //             position: end_position,
+        //             label: InlayHintLabel::LabelParts(vec![InlayHintLabelPart {
+        //                 value: item.2,
+        //                 tooltip: None,
+        //                 location: Some(Location {
+        //                     uri: params.text_document.uri.clone(),
+        //                     range: Range {
+        //                         start: Position::new(0, 4),
+        //                         end: Position::new(0, 5),
+        //                     },
+        //                 }),
+        //                 command: None,
+        //             }]),
+        //         };
+        //         Some(inlay_hint)
+        //     })
+        //     .collect::<Vec<_>>();
 
-        Ok(Some(inlay_hint_list))
+        // Ok(Some(inlay_hint_list))
+        Ok(Some(vec![]))
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
-        let uri = params.text_document_position.text_document.uri;
-        let position = params.text_document_position.position;
-        let completions = || -> Option<Vec<CompletionItem>> {
-            let rope = self.document_map.get(&uri.to_string())?;
-            let ast = self.ast_map.get(&uri.to_string())?;
-            let char = rope.try_line_to_char(position.line as usize).ok()?;
-            let offset = char + position.character as usize;
-            let completions = completion(&ast, offset);
-            let mut ret = Vec::with_capacity(completions.len());
-            for (_, item) in completions {
-                match item {
-                    sl_language_server::completion::ImCompleteCompletionItem::Variable(var) => {
-                        ret.push(CompletionItem {
-                            label: var.clone(),
-                            insert_text: Some(var.clone()),
-                            kind: Some(CompletionItemKind::VARIABLE),
-                            detail: Some(var),
-                            ..Default::default()
-                        });
-                    }
-                    sl_language_server::completion::ImCompleteCompletionItem::Function(
-                        name,
-                        args,
-                    ) => {
-                        ret.push(CompletionItem {
-                            label: name.clone(),
-                            kind: Some(CompletionItemKind::FUNCTION),
-                            detail: Some(name.clone()),
-                            insert_text: Some(format!(
-                                "{}({})",
-                                name,
-                                args.iter()
-                                    .enumerate()
-                                    .map(|(index, item)| { format!("${{{}:{}}}", index + 1, item) })
-                                    .collect::<Vec<_>>()
-                                    .join(",")
-                            )),
-                            insert_text_format: Some(InsertTextFormat::SNIPPET),
-                            ..Default::default()
-                        });
-                    }
-                }
-            }
-            Some(ret)
-        }();
-        Ok(completions.map(CompletionResponse::Array))
+        // let uri = params.text_document_position.text_document.uri;
+        // let position = params.text_document_position.position;
+        // let completions = || -> Option<Vec<CompletionItem>> {
+        //     let rope = self.document_map.get(&uri.to_string())?;
+        //     let ast = self.ast_map.get(&uri.to_string())?;
+        //     let char = rope.try_line_to_char(position.line as usize).ok()?;
+        //     let offset = char + position.character as usize;
+        //     let completions = completion(&ast, offset);
+        //     let mut ret = Vec::with_capacity(completions.len());
+        //     for (_, item) in completions {
+        //         match item {
+        //             sl_language_server::completion::ImCompleteCompletionItem::Variable(var) => {
+        //                 ret.push(CompletionItem {
+        //                     label: var.clone(),
+        //                     insert_text: Some(var.clone()),
+        //                     kind: Some(CompletionItemKind::VARIABLE),
+        //                     detail: Some(var),
+        //                     ..Default::default()
+        //                 });
+        //             }
+        //             sl_language_server::completion::ImCompleteCompletionItem::Function(
+        //                 name,
+        //                 args,
+        //             ) => {
+        //                 ret.push(CompletionItem {
+        //                     label: name.clone(),
+        //                     kind: Some(CompletionItemKind::FUNCTION),
+        //                     detail: Some(name.clone()),
+        //                     insert_text: Some(format!(
+        //                         "{}({})",
+        //                         name,
+        //                         args.iter()
+        //                             .enumerate()
+        //                             .map(|(index, item)| { format!("${{{}:{}}}", index + 1, item) })
+        //                             .collect::<Vec<_>>()
+        //                             .join(",")
+        //                     )),
+        //                     insert_text_format: Some(InsertTextFormat::SNIPPET),
+        //                     ..Default::default()
+        //                 });
+        //             }
+        //         }
+        //     }
+        //     Some(ret)
+        // }();
+        // Ok(completions.map(CompletionResponse::Array))
+        Ok(Some(CompletionResponse::Array(vec![])))
     }
 
     async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
-        let workspace_edit = || -> Option<WorkspaceEdit> {
-            let uri = params.text_document_position.text_document.uri;
-            let ast = self.ast_map.get(&uri.to_string())?;
-            let rope = self.document_map.get(&uri.to_string())?;
+        // let workspace_edit = || -> Option<WorkspaceEdit> {
+        //     let uri = params.text_document_position.text_document.uri;
+        //     let ast = self.ast_map.get(&uri.to_string())?;
+        //     let rope = self.document_map.get(&uri.to_string())?;
 
-            let position = params.text_document_position.position;
-            let char = rope.try_line_to_char(position.line as usize).ok()?;
-            let offset = char + position.character as usize;
-            let reference_list = get_reference(&ast, offset, true);
-            let new_name = params.new_name;
-            if !reference_list.is_empty() {
-                let edit_list = reference_list
-                    .into_iter()
-                    .filter_map(|(_, range)| {
-                        let start_position = offset_to_position(range.start, &rope)?;
-                        let end_position = offset_to_position(range.end, &rope)?;
-                        Some(TextEdit::new(
-                            Range::new(start_position, end_position),
-                            new_name.clone(),
-                        ))
-                    })
-                    .collect::<Vec<_>>();
-                let mut map = HashMap::new();
-                map.insert(uri, edit_list);
-                let workspace_edit = WorkspaceEdit::new(map);
-                Some(workspace_edit)
-            } else {
-                None
-            }
-        }();
-        Ok(workspace_edit)
+        //     let position = params.text_document_position.position;
+        //     let char = rope.try_line_to_char(position.line as usize).ok()?;
+        //     let offset = char + position.character as usize;
+        //     let reference_list = get_reference(&ast, offset, true);
+        //     let new_name = params.new_name;
+        //     if !reference_list.is_empty() {
+        //         let edit_list = reference_list
+        //             .into_iter()
+        //             .filter_map(|(_, range)| {
+        //                 let start_position = offset_to_position(range.start, &rope)?;
+        //                 let end_position = offset_to_position(range.end, &rope)?;
+        //                 Some(TextEdit::new(
+        //                     Range::new(start_position, end_position),
+        //                     new_name.clone(),
+        //                 ))
+        //             })
+        //             .collect::<Vec<_>>();
+        //         let mut map = HashMap::new();
+        //         map.insert(uri, edit_list);
+        //         let workspace_edit = WorkspaceEdit::new(map);
+        //         Some(workspace_edit)
+        //     } else {
+        //         None
+        //     }
+        // }();
+        // Ok(workspace_edit)
+        Ok(Some(WorkspaceEdit::default()))
     }
 
     async fn did_change_configuration(&self, _: DidChangeConfigurationParams) {
@@ -475,16 +484,30 @@ struct TextDocumentItem {
     version: i32,
 }
 
+fn tokenize(input: &str) -> Vec<(LogosToken, std::ops::Range<usize>)> {
+    LogosToken::lexer(input)
+        .spanned()
+        .map(|(tok, span)| match tok {
+            Ok(tok) => (tok, span.into()),
+            Err(()) => (LogosToken::Error, span.into()),
+        })
+        .collect::<Vec<_>>()
+}
+
 impl Backend {
     async fn on_change(&self, params: TextDocumentItem) {
         let rope = ropey::Rope::from_str(&params.text);
         self.document_map
             .insert(params.uri.to_string(), rope.clone());
-        let ParserResult {
-            ast,
-            parse_errors,
-            semantic_tokens,
-        } = parse(&params.text);
+        // let ParserResult {
+        //     ast,
+        //     parse_errors,
+        //     semantic_tokens,
+        // } = parse(&params.text);
+        let ast = PParser::new(&params.text, tokenize(&params.text)).parse();
+        let semantic_tokens = semantic_token::semantic_token_from_ast(&ast);
+        // parse errors set to none for now, type of Vec<Simple<String>>
+        let parse_errors: Vec<Simple<String>> = vec![];
         let diagnostics = parse_errors
             .into_iter()
             .filter_map(|item| {
@@ -538,9 +561,7 @@ impl Backend {
             .publish_diagnostics(params.uri.clone(), diagnostics, Some(params.version))
             .await;
 
-        if let Some(ast) = ast {
-            self.ast_map.insert(params.uri.to_string(), ast);
-        }
+        self.ast_map.insert(params.uri.to_string(), ast);
         // self.client
         //     .log_message(MessageType::INFO, &format!("{:?}", semantic_tokens))
         //     .await;

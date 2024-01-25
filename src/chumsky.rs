@@ -1,619 +1,1050 @@
-use chumsky::Parser;
-use chumsky::{prelude::*, stream::Stream};
-use core::fmt;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use tower_lsp::lsp_types::SemanticTokenType;
+use miette::{miette, LabeledSpan};
+use std::hint::unreachable_unchecked;
+use std::{fmt, ops::Range};
 
-use crate::semantic_token::LEGEND_TYPE;
+use logos::Logos;
+use rug::ops::CompleteRound;
+use rug::{Complete, Float, Integer};
 
-/// This is the parser and interpreter for the 'Foo' language. See `tutorial.md` in the repository's root to learn
-/// about it.
-pub type Span = std::ops::Range<usize>;
+#[macro_export]
+macro_rules! float {
+    [ $val:expr ] => {
+        rug::Float::with_val(53, $val)
+    };
+}
+
+pub type Span = Range<usize>;
 #[derive(Debug)]
 pub struct ImCompleteSemanticToken {
     pub start: usize,
     pub length: usize,
     pub token_type: usize,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Token {
-    Null,
-    Bool(bool),
-    Num(String),
-    Str(String),
-    Op(String),
-    Ctrl(char),
-    Ident(String),
-    Fn,
-    Let,
-    Print,
-    If,
-    Else,
-}
 
-impl fmt::Display for Token {
+#[derive(Logos, Debug, Clone, PartialEq)]
+#[logos(skip r"[ \r\f\t]+")]
+// skip comments
+#[logos(skip r"//.*")]
+pub enum LogosToken<'a> {
+    #[regex(r#"\d+"#, priority = 2)]
+    Int(&'a str),
+    #[regex(r#"((\d+(\.\d+)?)|((\.\d+))|(\.\d+))([Ee](\+|-)?\d+)?"#)]
+    Float(&'a str),
+    #[token(".")]
+    Dot,
+    #[token("..")]
+    Range,
+    #[token("...")]
+    ThreeDots,
+    #[token("true")]
+    True,
+    #[token("false")]
+    False,
+    #[token("nil")]
+    Nil,
+    #[token("inf")]
+    Inf,
+    #[token("+")]
+    Plus,
+    #[token("-")]
+    Minus,
+    #[token("*")]
+    Times,
+    #[token("/")]
+    Slash,
+    #[token("->")]
+    Arrow,
+    #[token("^")]
+    BinaryPow,
+    #[token("**")]
+    Pow,
+    #[token(",")]
+    Comma,
+    #[token(":")]
+    Colon,
+    #[token("=")]
+    Eq,
+    #[token("!")]
+    Bang,
+    #[token("&")]
+    Return,
+    #[token("&&")]
+    And,
+    #[token("||")]
+    Or,
+    #[token("%")]
+    Percent,
+    #[token("==")]
+    Eqq,
+    #[token("!=")]
+    Neq,
+    #[token("<=")]
+    Leq,
+    #[token(">=")]
+    Geq,
+    #[token("<")]
+    LAngle,
+    #[token(">")]
+    RAngle,
+    #[token("(")]
+    LParen,
+    #[token(")")]
+    RParen,
+    #[token("[")]
+    LSquare,
+    #[token("]")]
+    RSquare,
+    #[token("$")]
+    Dollar,
+    #[token("$$")]
+    DollarDollar,
+    #[token("{")]
+    LBrace,
+    #[token("+=")]
+    AddEq,
+    #[token("-=")]
+    SubEq,
+    #[token("*=")]
+    MulEq,
+    #[token("++")]
+    PAdd,
+    #[token("--")]
+    PSub,
+    #[token("?")]
+    Question,
+    #[token("/=")]
+    DivEq,
+    #[token("}")]
+    RBrace,
+    #[token(";")]
+    Semi,
+    // Constructs
+    #[regex(r#""([^"\\]|\\[\s\S])*""#)]
+    String(&'a str),
+    #[regex(r#"f"(([^"\\]|\\[\s\S])|(\{[^}]*\}))*""#)]
+    FString(&'a str),
+    #[regex(r#"[\p{L}a-zA-Z_][\p{L}\p{N}a-zA-Z0-9_]*"#)]
+    Ident(&'a str),
+    #[token(">.")]
+    While,
+    #[token("ev")]
+    Every,
+    #[token("br")]
+    Break,
+    #[token("ct")]
+    Continue,
+    #[token("mc")]
+    Match,
+    #[token("impl")]
+    Impl,
+    #[token("\n")]
+    Newline,
+    Error,
+}
+impl<'a> fmt::Display for LogosToken<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Token::Null => write!(f, "null"),
-            Token::Bool(x) => write!(f, "{}", x),
-            Token::Num(n) => write!(f, "{}", n),
-            Token::Str(s) => write!(f, "{}", s),
-            Token::Op(s) => write!(f, "{}", s),
-            Token::Ctrl(c) => write!(f, "{}", c),
-            Token::Ident(s) => write!(f, "{}", s),
-            Token::Fn => write!(f, "fn"),
-            Token::Let => write!(f, "let"),
-            Token::Print => write!(f, "print"),
-            Token::If => write!(f, "if"),
-            Token::Else => write!(f, "else"),
+            LogosToken::Newline => write!(f, "<newline>"),
+            LogosToken::And => write!(f, "&&"),
+            LogosToken::Or => write!(f, "||"),
+            LogosToken::True => write!(f, "true"),
+            LogosToken::False => write!(f, "false"),
+            LogosToken::Nil => write!(f, "nil"),
+            LogosToken::Inf => write!(f, "inf"),
+            LogosToken::Percent => write!(f, "%"),
+            LogosToken::Bang => write!(f, "!"),
+            LogosToken::String(_) => write!(f, "string"),
+            LogosToken::FString(_) => write!(f, "fstring"),
+            LogosToken::Ident(_) => write!(f, "identifier"),
+            LogosToken::Int(_) => write!(f, "integer"),
+            LogosToken::Float(_) => write!(f, "float"),
+            LogosToken::Question => write!(f, "?"),
+            LogosToken::Eq => write!(f, "="),
+            LogosToken::Eqq => write!(f, "=="),
+            LogosToken::Arrow => write!(f, "->"),
+            LogosToken::Semi => write!(f, ";"),
+            LogosToken::LAngle => write!(f, "<"),
+            LogosToken::RAngle => write!(f, ">"),
+            LogosToken::LParen => write!(f, "("),
+            LogosToken::Comma => write!(f, ","),
+            LogosToken::Dot => write!(f, "."),
+            LogosToken::Range => write!(f, ".."),
+            LogosToken::ThreeDots => write!(f, "..."),
+            LogosToken::RParen => write!(f, ")"),
+            LogosToken::Error => write!(f, "unknown character"),
+            LogosToken::Plus => write!(f, "+"),
+            LogosToken::Minus => write!(f, "-"),
+            LogosToken::Times => write!(f, "*"),
+            LogosToken::Slash => write!(f, "/"),
+            LogosToken::BinaryPow => write!(f, "^"),
+            LogosToken::Pow => write!(f, "**"),
+            LogosToken::Colon => write!(f, ":"),
+            LogosToken::Neq => write!(f, "!="),
+            LogosToken::Leq => write!(f, "<="),
+            LogosToken::Geq => write!(f, ">="),
+            LogosToken::LSquare => write!(f, "["),
+            LogosToken::RSquare => write!(f, "]"),
+            LogosToken::LBrace => write!(f, "{{"),
+            LogosToken::RBrace => write!(f, "}}"),
+            LogosToken::Return => write!(f, "&"),
+            LogosToken::AddEq => write!(f, "+="),
+            LogosToken::SubEq => write!(f, "-="),
+            LogosToken::MulEq => write!(f, "*="),
+            LogosToken::DivEq => write!(f, "/="),
+            LogosToken::Dollar => write!(f, "$"),
+            LogosToken::DollarDollar => write!(f, "$$"),
+            LogosToken::While => write!(f, ">."),
+            LogosToken::Every => write!(f, "ev"),
+            LogosToken::Break => write!(f, "br"),
+            LogosToken::Continue => write!(f, "ct"),
+            LogosToken::PAdd => write!(f, "++"),
+            LogosToken::Match => write!(f, "mc"),
+            LogosToken::Impl => write!(f, "impl"),
+            LogosToken::PSub => write!(f, "--"),
         }
     }
 }
 
-fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = Simple<char>> {
-    // A parser for numbers
-    let num = text::int(10)
-        .chain::<char, _, _>(just('.').chain(text::digits(10)).or_not().flatten())
-        .collect::<String>()
-        .map(Token::Num);
-
-    // A parser for strings
-    let str_ = just('"')
-        .ignore_then(filter(|c| *c != '"').repeated())
-        .then_ignore(just('"'))
-        .collect::<String>()
-        .map(Token::Str);
-
-    // A parser for operators
-    let op = one_of("+-*/!=")
-        .repeated()
-        .at_least(1)
-        .collect::<String>()
-        .map(Token::Op);
-
-    // A parser for control characters (delimiters, semicolons, etc.)
-    let ctrl = one_of("()[]{};,").map(Token::Ctrl);
-
-    // A parser for identifiers and keywords
-    let ident = text::ident().map(|ident: String| match ident.as_str() {
-        "fn" => Token::Fn,
-        "let" => Token::Let,
-        "print" => Token::Print,
-        "if" => Token::If,
-        "else" => Token::Else,
-        "true" => Token::Bool(true),
-        "false" => Token::Bool(false),
-        "null" => Token::Null,
-        _ => Token::Ident(ident),
-    });
-
-    // A single token can be one of the above
-    let token = num
-        .or(str_)
-        .or(op)
-        .or(ctrl)
-        .or(ident)
-        .recover_with(skip_then_retry_until([]));
-
-    let comment = just("//").then(take_until(just('\n'))).padded();
-
-    token
-        .padded_by(comment.repeated())
-        .map_with_span(|tok, span| (tok, span))
-        .padded()
-        .repeated()
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum Value {
-    Null,
-    Bool(bool),
-    Num(f64),
-    Str(String),
-    List(Vec<Value>),
-    Func(String),
-}
-
-impl std::fmt::Display for Value {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl<'a> LogosToken<'a> {
+    pub fn to_postfix_op(&self) -> PostfixOp {
         match self {
-            Self::Null => write!(f, "null"),
-            Self::Bool(x) => write!(f, "{}", x),
-            Self::Num(x) => write!(f, "{}", x),
-            Self::Str(x) => write!(f, "{}", x),
-            Self::List(xs) => write!(
-                f,
-                "[{}]",
-                xs.iter()
-                    .map(|x| x.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-            Self::Func(name) => write!(f, "<function: {}>", name),
+            Self::PAdd => PostfixOp::Increase,
+            Self::PSub => PostfixOp::Decrease,
+            Self::Bang => PostfixOp::Factorial,
+            _ => unsafe { unreachable_unchecked() },
+        }
+    }
+    pub fn to_unary_op(&self) -> UnaryOp {
+        match self {
+            Self::Minus => UnaryOp::Neg,
+            Self::Plus => UnaryOp::Plus,
+            Self::Bang => UnaryOp::Not,
+            _ => unsafe { unreachable_unchecked() },
+        }
+    }
+    pub fn to_binary_op(&self) -> BinaryOp {
+        match self {
+            Self::Times => BinaryOp::Mul,
+            Self::Percent => BinaryOp::Mod,
+            Self::BinaryPow => BinaryOp::BinaryPow,
+            Self::Pow => BinaryOp::Pow,
+            Self::Slash => BinaryOp::Div,
+            Self::Plus => BinaryOp::Add,
+            Self::Minus => BinaryOp::Sub,
+            Self::LAngle => BinaryOp::Less,
+            Self::RAngle => BinaryOp::Greater,
+            Self::Leq => BinaryOp::LessEq,
+            Self::Geq => BinaryOp::GreaterEq,
+            Self::Neq => BinaryOp::NotEq,
+            Self::Eqq => BinaryOp::Eq,
+            Self::AddEq => BinaryOp::AddEq,
+            Self::SubEq => BinaryOp::SubEq,
+            Self::MulEq => BinaryOp::MulEq,
+            Self::DivEq => BinaryOp::DivEq,
+            Self::Or => BinaryOp::Or,
+            Self::And => BinaryOp::And,
+            Self::Dot => BinaryOp::Attr,
+            Self::Range => BinaryOp::Range,
+
+            _ => unsafe { unreachable_unchecked() },
         }
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct Expr {
+    pub span: Range<usize>,
+    pub inner: ExprKind,
+}
+
+impl Expr {
+    pub fn new(span: Range<usize>, inner: ExprKind) -> Self {
+        Expr { inner, span }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum UnaryOp {
+    Not,
+    Neg,
+    Plus,
+}
+
+impl std::fmt::Display for UnaryOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Not => '!',
+                Self::Neg => '-',
+                Self::Plus => '+',
+            }
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum PostfixOp {
+    Increase,
+    Decrease,
+    Factorial,
+}
+
+impl std::fmt::Display for PostfixOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Increase => "++",
+                Self::Decrease => "--",
+                Self::Factorial => "!",
+            }
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BinaryOp {
-    Add,
-    Sub,
     Mul,
     Div,
-    Eq,
+    Add,
+    Sub,
+    Less,
+    Greater,
+    LessEq,
+    GreaterEq,
     NotEq,
+    Eq,
+    Or,
+    And,
+    AddEq,
+    SubEq,
+    MulEq,
+    DivEq,
+    Attr,
+    Mod,
+    BinaryPow,
+    Pow,
+    Range,
 }
 
-pub type Spanned<T> = (T, Span);
+impl BinaryOp {
+    pub fn is_comp(self) -> bool {
+        match self {
+            Self::Eq
+            | Self::NotEq
+            | Self::Greater
+            | Self::GreaterEq
+            | Self::Less
+            | Self::LessEq
+            | Self::And
+            | Self::Or => true,
+            _ => false,
+        }
+    }
+}
 
-// An expression node in the AST. Children are spanned so we can generate useful runtime errors.
-#[derive(Debug)]
-pub enum Expr {
+impl std::fmt::Display for BinaryOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Add => "+",
+                Self::Sub => "-",
+                Self::Mul => "*",
+                Self::Div => "/",
+                Self::Less => "<",
+                Self::Greater => ">",
+                Self::LessEq => "<=",
+                Self::GreaterEq => ">=",
+                Self::NotEq => "!=",
+                Self::Eq => "==",
+                Self::Or => "||",
+                Self::And => "&&",
+                Self::AddEq => "+=",
+                Self::SubEq => "-=",
+                Self::MulEq => "*=",
+                Self::DivEq => "/=",
+                Self::Attr => ".",
+                Self::Mod => "%",
+                Self::BinaryPow => "^",
+                Self::Pow => "**",
+                Self::Range => "..",
+            }
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExprKind {
+    Int(Integer),
+    Float(Float),
+    Bool(bool),
+    Return(Box<Expr>),
+    InlineFunction(String, Vec<String>, Box<Expr>),
+    MultilineFunction(String, Vec<String>, Vec<Expr>),
+    Call(String, Option<Vec<Expr>>),
+    Ternary(Box<Expr>, Vec<Expr>, Option<Vec<Expr>>),
+    String(String),
+    FString(String),
+    Ident(String),
+    Binary(Box<Expr>, BinaryOp, Box<Expr>),
+    Set(String, Box<Expr>),
+    Postfix(Box<Expr>, PostfixOp),
+    Array(Vec<Expr>),
+    While(Box<Expr>, Vec<Expr>),
+    Every(Box<Expr>, Vec<Expr>, String),
+    Impl(String, Vec<Expr>),
+
+    // used inside the match statement
+    HeadTail(String, String),
+    DefaultCase,
+    Match(Box<Expr>, Vec<(Expr, Vec<Expr>)>),
+
+    Index(Box<Expr>, Box<Expr>),
+    Slice(
+        Box<Expr>,
+        Option<Box<Expr>>,
+        Option<Box<Expr>>,
+        Option<Box<Expr>>,
+    ),
+
+    Unary(UnaryOp, Box<Expr>),
+
+    SetIndex(Box<Expr>, Box<Expr>),
+    AddIndex(Box<Expr>, Box<Expr>),
+    SubIndex(Box<Expr>, Box<Expr>),
+    MulIndex(Box<Expr>, Box<Expr>),
+    DivIndex(Box<Expr>, Box<Expr>),
+
+    Nil,
     Error,
-    Value(Value),
-    List(Vec<Spanned<Self>>),
-    Local(Spanned<String>),
-    Let(String, Box<Spanned<Self>>, Box<Spanned<Self>>, Span),
-    Then(Box<Spanned<Self>>, Box<Spanned<Self>>),
-    Binary(Box<Spanned<Self>>, BinaryOp, Box<Spanned<Self>>),
-    Call(Box<Spanned<Self>>, Spanned<Vec<Spanned<Self>>>),
-    If(Box<Spanned<Self>>, Box<Spanned<Self>>, Box<Spanned<Self>>),
-    Print(Box<Spanned<Self>>),
+    Break,
+    Continue,
 }
 
-#[allow(unused)]
-impl Expr {
-    /// Returns `true` if the expr is [`Error`].
-    ///
-    /// [`Error`]: Expr::Error
-    fn is_error(&self) -> bool {
-        matches!(self, Self::Error)
-    }
-
-    /// Returns `true` if the expr is [`Let`].
-    ///
-    /// [`Let`]: Expr::Let
-    fn is_let(&self) -> bool {
-        matches!(self, Self::Let(..))
-    }
-
-    /// Returns `true` if the expr is [`Value`].
-    ///
-    /// [`Value`]: Expr::Value
-    fn is_value(&self) -> bool {
-        matches!(self, Self::Value(..))
-    }
-
-    fn try_into_value(self) -> Result<Value, Self> {
-        if let Self::Value(v) = self {
-            Ok(v)
-        } else {
-            Err(self)
-        }
-    }
-
-    fn as_value(&self) -> Option<&Value> {
-        if let Self::Value(v) = self {
-            Some(v)
-        } else {
-            None
-        }
-    }
+pub struct PParser<'a> {
+    source: &'a str,
+    position: usize,
+    current: (LogosToken<'a>, Range<usize>),
+    tokens: Vec<(LogosToken<'a>, Range<usize>)>,
 }
 
-// A function node in the AST.
-#[derive(Debug)]
-pub struct Func {
-    pub args: Vec<Spanned<String>>,
-    pub body: Spanned<Expr>,
-    pub name: Spanned<String>,
-    pub span: Span,
-}
+impl<'a> PParser<'a> {
+    pub fn new(source: &'a str, tokens: Vec<(LogosToken<'a>, Range<usize>)>) -> Self {
+        let mut x = Self {
+            tokens,
+            source,
+            position: 0,
+            current: (LogosToken::Error, 0..0),
+        };
+        x.proceed();
+        x
+    }
 
-fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Clone {
-    recursive(|expr| {
-        let raw_expr = recursive(|raw_expr| {
-            let val = filter_map(|span, tok| match tok {
-                Token::Null => Ok(Expr::Value(Value::Null)),
-                Token::Bool(x) => Ok(Expr::Value(Value::Bool(x))),
-                Token::Num(n) => Ok(Expr::Value(Value::Num(n.parse().unwrap()))),
-                Token::Str(s) => Ok(Expr::Value(Value::Str(s))),
-                _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
-            })
-            .labelled("value");
-
-            let ident = filter_map(|span, tok| match tok {
-                Token::Ident(ident) => Ok((ident, span)),
-                _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
-            })
-            .labelled("identifier");
-
-            // A list of expressions
-            let items = expr
-                .clone()
-                .chain(just(Token::Ctrl(',')).ignore_then(expr.clone()).repeated())
-                .then_ignore(just(Token::Ctrl(',')).or_not())
-                .or_not()
-                .map(|item| item.unwrap_or_default());
-
-            // A let expression
-            let let_ = just(Token::Let)
-                .ignore_then(ident)
-                .then_ignore(just(Token::Op("=".to_string())))
-                .then(raw_expr)
-                .then_ignore(just(Token::Ctrl(';')))
-                .then(expr.clone())
-                .map(|((name, val), body)| {
-                    Expr::Let(name.0, Box::new(val), Box::new(body), name.1)
-                });
-
-            let list = items
-                .clone()
-                .delimited_by(just(Token::Ctrl('[')), just(Token::Ctrl(']')))
-                .map(Expr::List);
-
-            // 'Atoms' are expressions that contain no ambiguity
-            let atom = val
-                .or(ident.map(Expr::Local))
-                .or(let_)
-                .or(list)
-                // In Nano Rust, `print` is just a keyword, just like Python 2, for simplicity
-                .or(just(Token::Print)
-                    .ignore_then(
-                        expr.clone()
-                            .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')'))),
-                    )
-                    .map(|expr| Expr::Print(Box::new(expr))))
-                .map_with_span(|expr, span| (expr, span))
-                // Atoms can also just be normal expressions, but surrounded with parentheses
-                .or(expr
-                    .clone()
-                    .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')'))))
-                // Attempt to recover anything that looks like a parenthesised expression but contains errors
-                .recover_with(nested_delimiters(
-                    Token::Ctrl('('),
-                    Token::Ctrl(')'),
-                    [
-                        (Token::Ctrl('['), Token::Ctrl(']')),
-                        (Token::Ctrl('{'), Token::Ctrl('}')),
-                    ],
-                    |span| (Expr::Error, span),
-                ))
-                // Attempt to recover anything that looks like a list but contains errors
-                .recover_with(nested_delimiters(
-                    Token::Ctrl('['),
-                    Token::Ctrl(']'),
-                    [
-                        (Token::Ctrl('('), Token::Ctrl(')')),
-                        (Token::Ctrl('{'), Token::Ctrl('}')),
-                    ],
-                    |span| (Expr::Error, span),
-                ));
-
-            // Function calls have very high precedence so we prioritise them
-            let call = atom
-                .then(
-                    items
-                        .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')')))
-                        .map_with_span(|args, span| (args, span))
-                        .repeated(),
-                )
-                .foldl(|f, args| {
-                    let span = f.1.start..args.1.end;
-                    (Expr::Call(Box::new(f), args), span)
-                });
-
-            // Product ops (multiply and divide) have equal precedence
-            let op = just(Token::Op("*".to_string()))
-                .to(BinaryOp::Mul)
-                .or(just(Token::Op("/".to_string())).to(BinaryOp::Div));
-            let product = call
-                .clone()
-                .then(op.then(call).repeated())
-                .foldl(|a, (op, b)| {
-                    let span = a.1.start..b.1.end;
-                    (Expr::Binary(Box::new(a), op, Box::new(b)), span)
-                });
-
-            // Sum ops (add and subtract) have equal precedence
-            let op = just(Token::Op("+".to_string()))
-                .to(BinaryOp::Add)
-                .or(just(Token::Op("-".to_string())).to(BinaryOp::Sub));
-            let sum = product
-                .clone()
-                .then(op.then(product).repeated())
-                .foldl(|a, (op, b)| {
-                    let span = a.1.start..b.1.end;
-                    (Expr::Binary(Box::new(a), op, Box::new(b)), span)
-                });
-
-            // Comparison ops (equal, not-equal) have equal precedence
-            let op = just(Token::Op("==".to_string()))
-                .to(BinaryOp::Eq)
-                .or(just(Token::Op("!=".to_string())).to(BinaryOp::NotEq));
-
-            sum.clone()
-                .then(op.then(sum).repeated())
-                .foldl(|a, (op, b)| {
-                    let span = a.1.start..b.1.end;
-                    (Expr::Binary(Box::new(a), op, Box::new(b)), span)
-                })
-        });
-
-        // Blocks are expressions but delimited with braces
-        let block = expr
-            .clone()
-            .delimited_by(just(Token::Ctrl('{')), just(Token::Ctrl('}')))
-            // Attempt to recover anything that looks like a block but contains errors
-            .recover_with(nested_delimiters(
-                Token::Ctrl('{'),
-                Token::Ctrl('}'),
-                [
-                    (Token::Ctrl('('), Token::Ctrl(')')),
-                    (Token::Ctrl('['), Token::Ctrl(']')),
-                ],
-                |span| (Expr::Error, span),
-            ));
-
-        let if_ = recursive(|if_| {
-            just(Token::If)
-                .ignore_then(expr.clone())
-                .then(block.clone())
-                .then(
-                    just(Token::Else)
-                        .ignore_then(block.clone().or(if_))
-                        .or_not(),
-                )
-                .map_with_span(|((cond, a), b), span| {
-                    (
-                        Expr::If(
-                            Box::new(cond),
-                            Box::new(a),
-                            Box::new(match b {
-                                Some(b) => b,
-                                // If an `if` expression has no trailing `else` block, we magic up one that just produces null
-                                None => (Expr::Value(Value::Null), span.clone()),
-                            }),
-                        ),
-                        span,
-                    )
-                })
-        });
-
-        // Both blocks and `if` are 'block expressions' and can appear in the place of statements
-        let block_expr = block.or(if_).labelled("block");
-
-        let block_chain = block_expr
-            .clone()
-            .then(block_expr.clone().repeated())
-            .foldl(|a, b| {
-                let span = a.1.start..b.1.end;
-                (Expr::Then(Box::new(a), Box::new(b)), span)
-            });
-
-        block_chain
-            // Expressions, chained by semicolons, are statements
-            .or(raw_expr.clone())
-            .then(just(Token::Ctrl(';')).ignore_then(expr.or_not()).repeated())
-            .foldl(|a, b| {
-                let span = a.1.clone(); // TODO: Not correct
-                (
-                    Expr::Then(
-                        Box::new(a),
-                        Box::new(match b {
-                            Some(b) => b,
-                            None => (Expr::Value(Value::Null), span.clone()),
-                        }),
-                    ),
-                    span,
-                )
-            })
-    })
-}
-
-pub fn funcs_parser() -> impl Parser<Token, HashMap<String, Func>, Error = Simple<Token>> + Clone {
-    let ident = filter_map(|span, tok| match tok {
-        Token::Ident(ident) => Ok(ident),
-        _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
-    });
-
-    // Argument lists are just identifiers separated by commas, surrounded by parentheses
-    let args = ident
-        .map_with_span(|name, span| (name, span))
-        .separated_by(just(Token::Ctrl(',')))
-        .allow_trailing()
-        .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')')))
-        .labelled("function args");
-
-    let func = just(Token::Fn)
-        .ignore_then(
-            ident
-                .map_with_span(|name, span| (name, span))
-                .labelled("function name"),
-        )
-        .then(args)
-        .then(
-            expr_parser()
-                .delimited_by(just(Token::Ctrl('{')), just(Token::Ctrl('}')))
-                // Attempt to recover anything that looks like a function body but contains errors
-                .recover_with(nested_delimiters(
-                    Token::Ctrl('{'),
-                    Token::Ctrl('}'),
-                    [
-                        (Token::Ctrl('('), Token::Ctrl(')')),
-                        (Token::Ctrl('['), Token::Ctrl(']')),
-                    ],
-                    |span| (Expr::Error, span),
-                )),
-        )
-        .map_with_span(|((name, args), body), span| {
-            (
-                name.clone(),
-                Func {
-                    args,
-                    body,
-                    name,
-                    span,
-                },
+    fn report_error(
+        &mut self,
+        span: Range<usize>,
+        label: String,
+        message: String,
+        help: Option<String>,
+    ) {
+        let report;
+        if let Some(help) = help {
+            report = miette!(
+                labels = vec![LabeledSpan::at(span, label)],
+                help = help,
+                "{}",
+                message
             )
-        })
-        .labelled("function");
+            .with_source_code(self.source.to_string());
+        } else {
+            report = miette!(labels = vec![LabeledSpan::at(span, label)], "{}", message)
+                .with_source_code(self.source.to_string());
+        }
+        println!("{:?}", report);
+        std::process::exit(1);
+    }
 
-    func.repeated()
-        .try_map(|fs, _| {
-            let mut funcs = HashMap::new();
-            for ((name, name_span), f) in fs {
-                if funcs.insert(name.clone(), f).is_some() {
-                    return Err(Simple::custom(
-                        name_span,
-                        format!("Function '{}' already exists", name),
-                    ));
+    fn back(&mut self) -> Option<(LogosToken<'a>, Range<usize>)> {
+        let token = self.tokens.get(self.position - 2).cloned();
+        if token.is_some() {
+            self.current = token.clone().unwrap();
+        }
+        self.position -= 1;
+        token
+    }
+    fn proceed(&mut self) -> Option<(LogosToken<'a>, Range<usize>)> {
+        let token = self.tokens.get(self.position).cloned();
+        let span = if let Some((_, span)) = self.tokens.last() {
+            span.clone()
+        } else {
+            0..0
+        };
+
+        self.current = (LogosToken::Error, span);
+        if token.is_some() {
+            self.current = token.clone().unwrap();
+        }
+        self.position += 1;
+        token
+    }
+    fn check_fun(&self) -> bool {
+        matches!(
+            self.peek(0),
+            Some(LogosToken::Ident(_)) | Some(LogosToken::Colon)
+        )
+    }
+    pub fn block(&mut self) -> (Vec<Expr>, bool) {
+        let mut exprs: Vec<Expr> = Vec::new();
+        if self.current() == &LogosToken::LBrace {
+            self.proceed();
+            self.skip_separator();
+            loop {
+                if self.current() == &LogosToken::RBrace {
+                    self.proceed();
+                    break;
+                }
+                let current = self.current.0.to_owned();
+                let expr = self.declaration(current);
+                exprs.push(expr);
+                let (token, span) = self.current.clone();
+                if &token != &LogosToken::Newline
+                    && &token != &LogosToken::Semi
+                    && &token != &LogosToken::Error
+                    && &token != &LogosToken::RBrace
+                {
+                    self.report_error(
+                        span.clone(),
+                        "expected newline or semicolon".to_string(),
+                        format!("Expected semicolon or newline found {}", token),
+                        None,
+                    );
+                } else {
+                    self.skip_separator();
                 }
             }
-            Ok(funcs)
-        })
-        .then_ignore(end())
-}
-
-pub fn type_inference(expr: &Spanned<Expr>, symbol_type_table: &mut HashMap<Span, Value>) {
-    match &expr.0 {
-        Expr::Error => {}
-        Expr::Value(_) => {}
-        Expr::List(exprs) => exprs
-            .iter()
-            .for_each(|expr| type_inference(expr, symbol_type_table)),
-        Expr::Local(_) => {}
-        Expr::Let(_name, lhs, rest, name_span) => {
-            if let Some(value) = lhs.0.as_value() {
-                symbol_type_table.insert(name_span.clone(), value.clone());
-            }
-            type_inference(rest, symbol_type_table);
+        } else {
+            let expr = self.expr(0);
+            exprs.push(expr);
         }
-        Expr::Then(first, second) => {
-            type_inference(first, symbol_type_table);
-            type_inference(second, symbol_type_table);
-        }
-        Expr::Binary(_, _, _) => {}
-        Expr::Call(_, _) => {}
-        Expr::If(_test, consequent, alternative) => {
-            type_inference(consequent, symbol_type_table);
-            type_inference(alternative, symbol_type_table);
-        }
-        Expr::Print(expr) => {
-            type_inference(expr, symbol_type_table);
+        (exprs.clone(), exprs.len() == 1)
+    }
+    fn skip_separator(&mut self) {
+        while self.current() == &LogosToken::Newline || self.current() == &LogosToken::Semi {
+            self.proceed();
         }
     }
-}
+    pub fn parse(&mut self) -> Vec<Expr> {
+        let mut exprs: Vec<Expr> = Vec::new();
+        self.skip_separator();
+        loop {
+            if self.position >= self.tokens.len() + 1 {
+                break;
+            }
 
-#[derive(Debug)]
-pub struct ParserResult {
-    pub ast: Option<HashMap<String, Func>>,
-    pub parse_errors: Vec<Simple<String>>,
-    pub semantic_tokens: Vec<ImCompleteSemanticToken>,
-}
+            let (token, _) = self.current.clone();
+            exprs.push(self.declaration(token));
+            let (token, span) = self.current.clone();
+            if &token != &LogosToken::Newline
+                && &token != &LogosToken::Semi
+                && &token != &LogosToken::Error
+            {
+                self.report_error(
+                    span.clone(),
+                    "expected newline or semicolon".to_string(),
+                    format!("Expected semicolon or newline found {}", token),
+                    None,
+                );
+            } else {
+                self.skip_separator();
+            }
+        }
+        exprs
+    }
+    fn declaration(&mut self, token: LogosToken<'a>) -> Expr {
+        match token {
+            LogosToken::While => {
+                let start = self.current.1.start;
+                self.proceed();
+                let condition = self.expr(0);
+                let (block, _) = self.block();
+                return Expr::new(
+                    start..self.current.1.end,
+                    ExprKind::While(Box::new(condition), block),
+                );
+            }
+            LogosToken::Impl => {
+                let start = self.current.1.start;
+                self.proceed();
+                let ident = self.expect_ident();
+                self.proceed();
+                let (block, _) = self.block();
+                let end = self.current.1.end.clone();
+                Expr::new(start..end, ExprKind::Impl(ident, block))
+            }
+            LogosToken::Match => {
+                let start = self.current.1.start;
+                self.proceed();
+                let condition = self.expr(0);
+                self.expect(LogosToken::LBrace);
+                self.proceed();
+                let mut exprs: Vec<(Expr, Vec<Expr>)> = Vec::new();
+                self.skip_separator();
+                loop {
+                    if self.current() == &LogosToken::RBrace {
+                        self.proceed();
+                        break;
+                    }
+                    let current = self.current.0.clone();
+                    let val = if let LogosToken::Ident(first) = current {
+                        if self.peek(0) == Some(LogosToken::Colon)
+                            && self.peek(1) == Some(LogosToken::Colon)
+                        {
+                            let start = self.current.1.start.clone();
+                            self.proceed();
+                            self.proceed();
+                            let last = self.expect_ident();
+                            self.proceed();
 
-pub fn parse(src: &str) -> ParserResult {
-    let (tokens, errs) = lexer().parse_recovery(src);
+                            let end = self.current.1.end.clone();
+                            Expr::new(start..end, ExprKind::HeadTail(first.to_string(), last))
+                        } else if first == "_" {
+                            self.proceed();
+                            Expr::new(start..self.current.1.end, ExprKind::DefaultCase)
+                        } else {
+                            self.term(self.current.clone())
+                        }
+                    } else {
+                        self.term(self.current.clone())
+                    };
+                    self.expect(LogosToken::Colon);
+                    self.proceed();
+                    let (expr, _) = self.block();
+                    exprs.push((val, expr));
 
-    let (ast, tokenize_errors, semantic_tokens) = if let Some(tokens) = tokens {
-        // info!("Tokens = {:?}", tokens);
-        let semantic_tokens = tokens
-            .iter()
-            .filter_map(|(token, span)| match token {
-                Token::Null => None,
-                Token::Bool(_) => None,
+                    let (token, span) = self.current.clone();
+                    if &token != &LogosToken::Newline
+                        && &token != &LogosToken::Semi
+                        && &token != &LogosToken::Error
+                    {
+                        self.report_error(
+                            span.clone(),
+                            "expected newline or semicolon".to_string(),
+                            format!("Expected semicolon or newline found {}", token),
+                            None,
+                        );
+                    } else {
+                        self.skip_separator();
+                    }
+                }
+                Expr::new(
+                    start..self.current.1.end,
+                    ExprKind::Match(Box::new(condition), exprs),
+                )
+            }
+            LogosToken::Every => {
+                let start = self.current.1.start;
+                self.proceed();
+                let for_el = self.expr(0);
+                let var_name = match self.current.0 {
+                    LogosToken::Ident(ident) => {
+                        self.proceed();
+                        ident.to_string()
+                    }
+                    _ => "i".to_string(),
+                };
+                let (block, _) = self.block();
+                return Expr::new(
+                    start..self.current.1.end,
+                    ExprKind::Every(Box::new(for_el), block, var_name),
+                );
+            }
+            LogosToken::Return => {
+                let start = self.current.1.start;
+                self.proceed();
+                let expr = self.expr(0);
+                return Expr::new(start..self.current.1.end, ExprKind::Return(Box::new(expr)));
+            }
+            LogosToken::Ident(x) => {
+                let start = self.current.1.start;
+                if self.peek(0) == Some(LogosToken::Eq) {
+                    self.proceed();
+                    self.proceed();
+                    let expr = self.expr(0);
+                    Expr::new(
+                        start..self.current.1.end,
+                        ExprKind::Set(x.to_string(), Box::new(expr)),
+                    )
+                } else if self.check_fun() {
+                    let mut params: Vec<String> = Vec::new();
+                    self.proceed();
+                    while self.current() != &LogosToken::Colon {
+                        params.push(self.expect_ident());
+                        self.proceed();
+                    }
+                    self.proceed();
+                    let (exprs, is_inline) = self.block();
+                    if is_inline {
+                        Expr::new(
+                            start..exprs.last().unwrap().span.end,
+                            ExprKind::InlineFunction(
+                                x.to_string(),
+                                params,
+                                Box::new(exprs[0].clone()),
+                            ),
+                        )
+                    } else {
+                        Expr::new(
+                            start..exprs.last().unwrap().span.end,
+                            ExprKind::MultilineFunction(x.to_string(), params, exprs),
+                        )
+                    }
+                } else {
+                    self.expr(0)
+                }
+            }
+            _ => self.expr(0),
+        }
+    }
 
-                Token::Num(_) => Some(ImCompleteSemanticToken {
-                    start: span.start,
-                    length: span.len(),
-                    token_type: LEGEND_TYPE
-                        .iter()
-                        .position(|item| item == &SemanticTokenType::NUMBER)
-                        .unwrap(),
-                }),
-                Token::Str(_) => Some(ImCompleteSemanticToken {
-                    start: span.start,
-                    length: span.len(),
-                    token_type: LEGEND_TYPE
-                        .iter()
-                        .position(|item| item == &SemanticTokenType::STRING)
-                        .unwrap(),
-                }),
-                Token::Op(_) => Some(ImCompleteSemanticToken {
-                    start: span.start,
-                    length: span.len(),
-                    token_type: LEGEND_TYPE
-                        .iter()
-                        .position(|item| item == &SemanticTokenType::OPERATOR)
-                        .unwrap(),
-                }),
-                Token::Ctrl(_) => None,
-                Token::Ident(_) => None,
-                Token::Fn => Some(ImCompleteSemanticToken {
-                    start: span.start,
-                    length: span.len(),
-                    token_type: LEGEND_TYPE
-                        .iter()
-                        .position(|item| item == &SemanticTokenType::KEYWORD)
-                        .unwrap(),
-                }),
-                Token::Let => Some(ImCompleteSemanticToken {
-                    start: span.start,
-                    length: span.len(),
-                    token_type: LEGEND_TYPE
-                        .iter()
-                        .position(|item| item == &SemanticTokenType::KEYWORD)
-                        .unwrap(),
-                }),
-                Token::Print => Some(ImCompleteSemanticToken {
-                    start: span.start,
-                    length: span.len(),
-                    token_type: LEGEND_TYPE
-                        .iter()
-                        .position(|item| item == &SemanticTokenType::FUNCTION)
-                        .unwrap(),
-                }),
-                Token::If => Some(ImCompleteSemanticToken {
-                    start: span.start,
-                    length: span.len(),
-                    token_type: LEGEND_TYPE
-                        .iter()
-                        .position(|item| item == &SemanticTokenType::KEYWORD)
-                        .unwrap(),
-                }),
-                Token::Else => Some(ImCompleteSemanticToken {
-                    start: span.start,
-                    length: span.len(),
-                    token_type: LEGEND_TYPE
-                        .iter()
-                        .position(|item| item == &SemanticTokenType::KEYWORD)
-                        .unwrap(),
-                }),
-            })
-            .collect::<Vec<_>>();
-        let len = src.chars().count();
-        let (ast, parse_errs) =
-            funcs_parser().parse_recovery(Stream::from_iter(len..len + 1, tokens.into_iter()));
+    fn check_eof(&self, token: &LogosToken) -> bool {
+        match token {
+            LogosToken::Error => true,
+            _ => false,
+        }
+    }
+    fn infix_binding_power(&mut self, op: &LogosToken) -> Option<(u8, u8)> {
+        use LogosToken::*;
+        Some(match op {
+            Range => (7, 8),
+            Plus | Minus => (10, 11),
+            Times | Slash => (20, 21),
+            Percent => (30, 31),
+            BinaryPow => (40, 41),
+            Pow => (50, 51),
+            Dot | LSquare => (62, 63),
 
-        (ast, parse_errs, semantic_tokens)
-    } else {
-        (None, Vec::new(), vec![])
-    };
+            Eqq | Neq | Leq | Geq | RAngle | LAngle => (6, 7),
+            AddEq | SubEq | MulEq | DivEq => (1, 2),
+            Question => (4, 3),
+            Or | And => (5, 6),
 
-    let parse_errors = errs
-        .into_iter()
-        .map(|e| e.map(|c| c.to_string()))
-        .chain(
-            tokenize_errors
-                .into_iter()
-                .map(|e| e.map(|tok| tok.to_string())),
-        )
-        .collect::<Vec<_>>();
+            _ => return None,
+        })
+    }
+    fn postfix_binding_power(&mut self, op: &LogosToken) -> Option<(u8, ())> {
+        use LogosToken::*;
+        Some(match op {
+            PAdd | PSub => (70, ()),
+            Bang => (80, ()),
+            _ => return None,
+        })
+    }
+    fn index_op(
+        &mut self,
+        lhs: &mut Expr,
+        start: usize,
+        expr_kind: fn(Box<Expr>, Box<Expr>) -> ExprKind,
+    ) {
+        self.proceed();
+        let e = self.expr(0);
+        *lhs = Expr::new(
+            start..self.current.1.end,
+            expr_kind(Box::new(lhs.clone()), Box::new(e)),
+        );
+    }
+    fn current(&self) -> &LogosToken {
+        &self.current.0
+    }
+    fn expr(&mut self, min_bp: u8) -> Expr {
+        let c = self.current.to_owned();
+        let mut lhs = self.term(c);
+        let start = lhs.span.clone().start;
+        loop {
+            let op = self.current.0.to_owned();
+            if self.check_eof(&op) {
+                break;
+            }
+            if let Some((l_bp, ())) = self.postfix_binding_power(&op) {
+                if l_bp < min_bp {
+                    break;
+                }
+                self.proceed();
+                lhs = Expr::new(
+                    start..self.current.1.end,
+                    ExprKind::Postfix(Box::new(lhs), op.to_postfix_op()),
+                );
+                continue;
+            }
+            if let Some((l_bp, r_bp)) = self.infix_binding_power(&op) {
+                if l_bp < min_bp {
+                    break;
+                }
+                self.proceed();
+                if op == LogosToken::Question {
+                    let mhs = self.block();
+                    if self.current() == &LogosToken::Colon {
+                        self.proceed();
+                        let rhs = self.block();
+                        lhs = Expr::new(
+                            start..rhs.0.last().unwrap().span.end,
+                            ExprKind::Ternary(Box::new(lhs), mhs.0, Some(rhs.0)),
+                        )
+                    } else {
+                        lhs = Expr::new(
+                            start..mhs.0.last().unwrap().span.end,
+                            ExprKind::Ternary(Box::new(lhs), mhs.0, None),
+                        )
+                    }
+                    continue;
+                }
 
-    ParserResult {
-        ast,
-        parse_errors,
-        semantic_tokens,
+                if op == LogosToken::LSquare {
+                    let mut parts: Vec<Option<Expr>> = Vec::new();
+                    while self.current() != &LogosToken::LSquare || parts.len() < 3 {
+                        match self.current() {
+                            &LogosToken::Colon => {
+                                if parts.last() == None {
+                                    parts.push(None)
+                                }
+                                self.proceed();
+                                if self.current() == &LogosToken::Colon {
+                                    parts.push(None);
+                                    self.proceed();
+                                } else if self.current() != &LogosToken::RSquare {
+                                    parts.push(Some(self.expr(0)))
+                                }
+                            }
+                            &LogosToken::RSquare => {
+                                while parts.len() < 3 {
+                                    parts.push(None)
+                                }
+                                break;
+                            }
+                            _ => {
+                                let expr = self.expr(0);
+                                parts.push(Some(expr));
+                            }
+                        }
+                    }
+                    let index = parts[0].clone();
+                    let index_end = parts[1].clone();
+                    let step = parts[2].clone();
+                    if parts.len() > 3 {
+                        self.report_error(
+                            start..self.current.1.end,
+                            "Slice took more than 3 parts".into(),
+                            "Slice took more than 3 parts".into(),
+                            None,
+                        );
+                    }
+                    if index.is_some() && index_end.is_none() && step.is_none() {
+                        lhs = Expr::new(
+                            start..self.current.1.end,
+                            ExprKind::Index(Box::new(lhs), Box::new(index.unwrap())),
+                        );
+                    } else {
+                        lhs = Expr::new(
+                            start..self.current.1.end,
+                            ExprKind::Slice(
+                                Box::new(lhs),
+                                index.map(|x| Box::new(x)),
+                                index_end.map(|x| Box::new(x)),
+                                step.map(|x| Box::new(x)),
+                            ),
+                        )
+                    }
+                    self.expect(LogosToken::RSquare);
+                    self.proceed();
+                    match self.current() {
+                        LogosToken::Eq => self.index_op(&mut lhs, start, ExprKind::SetIndex),
+                        LogosToken::AddEq => self.index_op(&mut lhs, start, ExprKind::AddIndex),
+                        LogosToken::SubEq => self.index_op(&mut lhs, start, ExprKind::SubIndex),
+                        LogosToken::MulEq => self.index_op(&mut lhs, start, ExprKind::MulIndex),
+                        LogosToken::DivEq => self.index_op(&mut lhs, start, ExprKind::DivIndex),
+                        _ => {}
+                    }
+                    continue;
+                }
+                let rhs = self.expr(r_bp);
+                lhs = Expr::new(
+                    start..rhs.span.end,
+                    ExprKind::Binary(Box::new(lhs), op.to_binary_op(), Box::new(rhs)),
+                );
+                continue;
+            }
+            break;
+        }
+        lhs
+    }
+    fn peek(&self, x: usize) -> Option<LogosToken> {
+        let token = self.tokens.get(self.position + x).cloned();
+        token.map(|(token, _)| token)
+    }
+    fn expect_ident(&mut self) -> String {
+        let (token, span) = &self.current;
+        if let LogosToken::Ident(ident) = token {
+            return ident.to_string();
+        }
+
+        self.report_error(
+            span.clone(),
+            "expected identifier".to_string(),
+            format!("Expected identifier found {}", token),
+            None,
+        );
+        unsafe { unreachable_unchecked() }
+    }
+    fn expect(&mut self, token: LogosToken) {
+        let (tok, span) = &self.current;
+        if tok != &token {
+            self.report_error(
+                span.clone(),
+                format!("expected {}", token),
+                format!("Expected {} found {}", token, tok),
+                Some(format!("Replace it with {token}")),
+            );
+        }
+    }
+
+    fn process_string(mut value: String, fstring: bool) -> String {
+        value.remove(0);
+        if fstring {
+            value.remove(0);
+        }
+        value.remove(value.len() - 1);
+
+        let mut chars = value.chars();
+        let mut processed_str = String::new();
+
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                let next = chars.next().unwrap();
+                match next {
+                    'n' => processed_str.push('\n'),
+                    't' => processed_str.push('\t'),
+                    'r' => processed_str.push('\r'),
+                    'x' => {
+                        let mut hex = String::new();
+                        hex.push(chars.next().unwrap());
+                        hex.push(chars.next().unwrap());
+                        let hex = u32::from_str_radix(&hex, 16).unwrap();
+                        processed_str.push(hex as u8 as char);
+                    }
+                    '$' => processed_str.push_str("\\$"),
+                    '{' => processed_str.push_str("\\{"),
+                    _ => processed_str.push(next),
+                }
+            } else {
+                processed_str.push(c);
+            }
+        }
+        processed_str
+    }
+
+    fn term(&mut self, token: (LogosToken, Range<usize>)) -> Expr {
+        let (token, span) = token;
+        let kind = match token {
+            LogosToken::LSquare => {
+                self.proceed();
+                let mut values = Vec::new();
+                while self.current() != &LogosToken::RSquare {
+                    let expr = self.expr(0);
+                    values.push(expr);
+                    if self.current() != &LogosToken::Comma {
+                        break;
+                    }
+                    self.proceed();
+                }
+                ExprKind::Array(values)
+            }
+            LogosToken::Int(value) => ExprKind::Int(Integer::parse(value).unwrap().complete()),
+            LogosToken::Float(value) => ExprKind::Float(Float::parse(value).unwrap().complete(53)),
+            LogosToken::True => ExprKind::Bool(true),
+            LogosToken::False => ExprKind::Bool(false),
+            LogosToken::Nil => ExprKind::Nil,
+            LogosToken::Inf => ExprKind::Float(float!(rug::float::Special::Infinity)),
+            LogosToken::Break => ExprKind::Break,
+            LogosToken::Continue => ExprKind::Continue,
+            LogosToken::String(value) => {
+                ExprKind::String(Self::process_string(value.to_owned(), false))
+            }
+            LogosToken::FString(value) => {
+                ExprKind::FString(Self::process_string(value.to_owned(), true))
+            }
+            v @ LogosToken::Dollar | v @ LogosToken::DollarDollar => {
+                self.proceed();
+                let expr = self.expr(0);
+                return Expr::new(
+                    span.start..self.current.1.end,
+                    ExprKind::Call(v.to_string(), Some(vec![expr])),
+                );
+            }
+            LogosToken::Ident(value) => {
+                let ident = ExprKind::Ident(value.to_string());
+                self.proceed();
+                if LogosToken::LParen == self.current.0 {
+                    self.proceed();
+                    let mut args: Vec<Expr> = Vec::new();
+                    loop {
+                        if self.current.0 == LogosToken::RParen {
+                            break;
+                        }
+                        let expr = self.expr(0);
+                        args.push(expr);
+                        if self.current.0 != LogosToken::Comma {
+                            break;
+                        }
+                        self.proceed();
+                    }
+                    self.proceed();
+                    let span = span.start..self.current.1.start;
+                    let kind = ExprKind::Call(value.to_string(), Some(args));
+                    return Expr::new(span, kind);
+                }
+                let kind = if value.starts_with("_") {
+                    ExprKind::String(value[1..].replace("_", " "))
+                } else {
+                    ident
+                };
+                let current = &self.current;
+                return Expr::new(span.start..current.1.end, kind);
+            }
+            LogosToken::LParen => {
+                self.proceed();
+                let expr = self.expr(5);
+                self.expect(LogosToken::RParen);
+                expr.inner
+            }
+            LogosToken::Minus | LogosToken::Plus => {
+                self.proceed();
+                let expr = self.term(self.current.clone());
+                self.back();
+                ExprKind::Unary(token.to_unary_op(), Box::new(expr))
+            }
+            LogosToken::Bang => {
+                self.proceed();
+                let expr = self.expr(0);
+                self.back();
+                ExprKind::Unary(token.to_unary_op(), Box::new(expr))
+            }
+            _ => {
+                self.report_error(
+                    span.clone(),
+                    "this is not a value".to_string(),
+                    "Expected expression".to_string(),
+                    Some("Expected a value like integers, strings, etc.".to_string()),
+                );
+                unsafe { unreachable_unchecked() }
+            }
+        };
+        let current = self.current.clone();
+        self.proceed();
+
+        Expr::new(span.start..current.1.end, kind)
     }
 }
